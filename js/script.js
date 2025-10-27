@@ -1,272 +1,259 @@
-// Use this URL to fetch NASA APOD JSON data (mirror with many entries).
-// If your instructor provided a different endpoint, keep that one.
-const apodData = 'https://cdn.jsdelivr.net/gh/GCA-Classroom/apod/data.json';
+/* =========================================================
+   NASA Space Explorer – APOD Gallery
+   Uses class-provided APOD mirror feed (JSON array of entries)
+   Keys: date, title, explanation, media_type, url, (hdurl), (thumbnail_url)
+   ========================================================= */
 
-// Elements
-const startInput = document.getElementById('startDate');
-const endInput   = document.getElementById('endDate');
-const button     = document.getElementById('getImageBtn');
-const gallery    = document.getElementById('gallery');
-const statusBox  = document.getElementById('status');
+const FEED_URL = window.APOD_FEED_URL; // set in index.html
+const getBtn = document.getElementById('getImageBtn');
+const gallery = document.getElementById('gallery');
+const placeholder = document.getElementById('placeholder');
+const startDateEl = document.getElementById('startDate');
+const endDateEl = document.getElementById('endDate');
+const factEl = document.getElementById('spaceFact');
 
-// Modal elements
-const modal          = document.getElementById('modal');
-const modalMedia     = document.getElementById('modalMedia');
-const modalTitle     = document.getElementById('modalTitle');
-const modalDate      = document.getElementById('modalDate');
-const modalExplain   = document.getElementById('modalExplain');
-const modalLinks     = document.getElementById('modalLinks');
-
-// Random fact bar
-const factBar = document.getElementById('factBar');
-
-// Simple space facts (Extra Credit: Random Fact)
+/* ---------- Random “Did You Know?” facts (extra credit) ---------- */
 const SPACE_FACTS = [
-  "Neutron stars can spin 600 times per second.",
-  "Jupiter’s Great Red Spot is a storm at least 300 years old.",
-  "A day on Venus is longer than its year.",
-  "There are more trees on Earth than stars in the Milky Way (by most estimates).",
-  "Saturn could float in water because it’s mostly hydrogen and helium.",
-  "Olympus Mons on Mars is ~3× the height of Mount Everest.",
-  "If you could travel at light speed, the nearest star (Proxima Centauri) would still be over 4 years away.",
-  "Space is not empty—there’s about one atom per cubic centimeter on average.",
-  "The Sun accounts for ~99.86% of the Solar System’s mass.",
-  "We see galaxies as they were in the past—light takes millions or billions of years to reach us."
+  "Jupiter is so massive it accounts for about 70% of all planetary mass in our solar system.",
+  "Neutron stars can spin hundreds of times per second—faster than a kitchen blender.",
+  "Space is not completely empty—there’s about one atom per cubic centimeter in interstellar space.",
+  "A day on Venus is longer than its year due to its slow rotation.",
+  "The Milky Way and Andromeda are on a collision course and will merge in ~4–5 billion years.",
+  "Saturn could theoretically float in water—it’s less dense than liquid water.",
+  "The James Webb Space Telescope observes mostly in infrared to see through cosmic dust.",
+  "There are more trees on Earth than stars in the Milky Way… but not more than stars in the observable universe."
 ];
-
-// Helpers
-const fmt = (d) => d.toISOString().slice(0,10);
-function clampToToday(dateStr) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const d = new Date(dateStr); d.setHours(0,0,0,0);
-  return d > today ? fmt(today) : fmt(d);
+function showRandomFact() {
+  const idx = Math.floor(Math.random() * SPACE_FACTS.length);
+  factEl.textContent = `💡 Did you know? ${SPACE_FACTS[idx]}`;
 }
-function showStatus(message, isLoading = false) {
-  statusBox.innerHTML = isLoading
-    ? `<div class="loading">🔄 ${message}</div>`
-    : (message ? `<div>${message}</div>` : '');
-}
+showRandomFact();
 
-function pickRandomFact() {
-  const fact = SPACE_FACTS[Math.floor(Math.random() * SPACE_FACTS.length)];
-  factBar.textContent = `💡 Did you know? ${fact}`;
+/* ---------- Helpers ---------- */
+const parseISO = (s) => new Date(s + "T00:00:00Z");
+function withinRange(dateISO, startISO, endISO) {
+  const d = parseISO(dateISO);
+  if (startISO && d < parseISO(startISO)) return false;
+  if (endISO && d > parseISO(endISO)) return false;
+  return true;
 }
-
-// Default dates: last 7 days
-(function setDefaultDates() {
-  const today = new Date();
-  const sevenAgo = new Date(); sevenAgo.setDate(today.getDate() - 7);
-  endInput.value   = fmt(today);
-  startInput.value = fmt(sevenAgo);
-  endInput.max = fmt(today);
-  startInput.max = fmt(today);
-})();
-
-// Accessibility: close modal with ESC or click on backdrop / close button
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && modal.getAttribute('aria-hidden') === 'false') closeModal();
-});
-modal.addEventListener('click', (e) => {
-  if (e.target.matches('[data-close]')) closeModal();
-});
-function openModal() {
-  modal.setAttribute('aria-hidden', 'false');
-  // Basic focus management
-  document.querySelector('.modal-close')?.focus();
-  document.body.style.overflow = 'hidden';
-}
-function closeModal() {
-  modal.setAttribute('aria-hidden', 'true');
-  modalMedia.innerHTML = '';
-  modalTitle.textContent = '';
-  modalDate.textContent = '';
-  modalExplain.textContent = '';
-  modalLinks.innerHTML = '';
-  document.body.style.overflow = '';
+function prettyDate(iso) {
+  const d = parseISO(iso);
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
-function isWithinRange(dateStr, startStr, endStr) {
-  return dateStr >= startStr && dateStr <= endStr;
-}
-
-function cardTemplate(item) {
-  const isVideo = item.media_type === 'video';
-  const thumbSrc = isVideo
-    ? // Try to extract a YouTube thumbnail if possible; otherwise fallback to a generic thumbnail
-      (item.thumbnail_url || (item.url?.includes('youtube') ? youTubeThumb(item.url) : null))
-    : (item.url || item.hdurl);
-
-  const imgAlt = isVideo
-    ? `Video thumbnail for ${item.title}`
-    : (item.title || 'APOD image');
-
-  return `
-    <article class="gallery-item" tabindex="0" role="button" aria-label="Open details for ${escapeHtml(item.title || 'APOD')}">
-      <div class="gallery-thumb-wrap">
-        ${thumbSrc
-          ? `<img src="${thumbSrc}" alt="${escapeHtml(imgAlt)}" loading="lazy" />`
-          : `<div style="height:220px;display:flex;align-items:center;justify-content:center;color:#fff;background:#000;">No preview</div>`
-        }
-        ${isVideo ? `<span class="badge">VIDEO</span>` : ``}
-      </div>
-      <h3>${escapeHtml(item.title || 'Untitled')}</h3>
-      <div class="meta">${escapeHtml(item.date || '')}</div>
-    </article>
+/* ---------- Loading UI ---------- */
+function showLoading() {
+  gallery.innerHTML = `
+    <div class="loading" role="status" aria-live="polite">
+      <span>🔄 Loading space photos…</span>
+    </div>
   `;
 }
-
-function youTubeThumb(url) {
-  try {
-    const u = new URL(url);
-    // Support youtu.be or youtube.com/watch?v=
-    let id = u.searchParams.get('v');
-    if (!id && u.hostname.includes('youtu.be')) {
-      id = u.pathname.slice(1);
-    }
-    return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : null;
-  } catch { return null; }
+function clearLoading() {
+  // no-op; renderCards will replace gallery content
 }
 
-function escapeHtml(str) {
-  return (str || '').replace(/[&<>"']/g, m => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
-  }[m]));
-}
-
-function renderGallery(items) {
+/* ---------- Render ---------- */
+function renderCards(items) {
   if (!items.length) {
     gallery.innerHTML = `
       <div class="placeholder">
         <div class="placeholder-icon">🛰️</div>
-        <p>No results for this date range. Try widening your search.</p>
-      </div>`;
+        <p>No results for that date range. Try widening your search.</p>
+      </div>
+    `;
     return;
   }
-  // Sort newest → oldest
-  items.sort((a,b) => (a.date < b.date ? 1 : -1));
 
-  gallery.innerHTML = items.map(cardTemplate).join('');
+  const html = items.map((item, idx) => {
+    const isVideo = item.media_type === 'video';
+    const thumb = chooseThumb(item);
+    const badge = isVideo ? `<span class="badge">Video</span>` : `<span class="badge">Image</span>`;
+    const safeTitle = escapeHtml(item.title ?? "Untitled");
+    const dateStr = prettyDate(item.date);
 
-  // Wire up item clicks (open modal)
-  const cards = gallery.querySelectorAll('.gallery-item');
-  cards.forEach((card, idx) => {
-    const item = items[idx];
-    const open = () => showInModal(item);
-    card.addEventListener('click', open);
+    return `
+      <article class="card" tabindex="0" data-index="${idx}" aria-label="${safeTitle} — ${dateStr}">
+        <div class="thumb-wrap">
+          ${badge}
+          <img class="thumb" src="${thumb}" alt="${safeTitle}" loading="lazy" />
+        </div>
+        <div class="card-body">
+          <div class="title">${safeTitle}</div>
+          <div class="meta">${dateStr}</div>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  gallery.innerHTML = html;
+
+  // Click & keyboard to open modal
+  gallery.querySelectorAll('.card').forEach(card => {
+    card.addEventListener('click', () => openModal(items[Number(card.dataset.index)]));
     card.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openModal(items[Number(card.dataset.index)]);
+      }
     });
   });
 }
 
-function showInModal(item) {
-  modalMedia.innerHTML = '';
-  modalLinks.innerHTML = '';
-
-  const isVideo = item.media_type === 'video';
-  if (isVideo && item.url) {
-    // Extra Credit: embed YouTube when possible; else show link
-    let iframe = '';
-    try {
-      const u = new URL(item.url);
-      if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
-        const id = youTubeIdFromUrl(item.url);
-        if (id) {
-          iframe = `
-            <iframe
-              src="https://www.youtube.com/embed/${id}"
-              title="${escapeHtml(item.title || 'APOD Video')}"
-              frameborder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowfullscreen
-            ></iframe>`;
-        }
-      }
-    } catch {}
-    if (iframe) {
-      modalMedia.innerHTML = iframe;
-    } else {
-      // Fallback: clickable link
-      modalMedia.innerHTML = `<div style="height:520px;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;">
-        <a href="${item.url}" target="_blank" rel="noopener noreferrer" style="color:#fff;text-decoration:underline;">Open Video</a>
-      </div>`;
-    }
-  } else {
-    const largeSrc = item.hdurl || item.url;
-    if (largeSrc) {
-      const img = document.createElement('img');
-      img.src = largeSrc;
-      img.alt = item.title || 'APOD image';
-      img.loading = 'eager';
-      modalMedia.appendChild(img);
-    } else {
-      modalMedia.innerHTML = `<div style="height:520px;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;">No image available</div>`;
-    }
+/* ---------- Choose thumbnail for videos/images ---------- */
+function chooseThumb(item) {
+  if (item.media_type === 'image') {
+    return item.url || item.hdurl || '';
   }
+  // Video: try explicit thumbnail_url if present; else derive YouTube thumbnail; fallback to placeholder frame
+  if (item.thumbnail_url) return item.thumbnail_url;
 
-  modalTitle.textContent = item.title || 'Untitled';
-  modalDate.textContent  = item.date || '';
-  modalExplain.textContent = item.explanation || '';
+  const url = item.url || '';
+  const ytId = extractYouTubeId(url);
+  if (ytId) return `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
 
-  // Links (HD, Original, Copyright)
-  if (item.hdurl) {
-    modalLinks.insertAdjacentHTML('beforeend',
-      `<a href="${item.hdurl}" target="_blank" rel="noopener noreferrer">View HD</a>`);
-  }
-  if (item.url && item.url !== item.hdurl) {
-    modalLinks.insertAdjacentHTML('beforeend',
-      `<a href="${item.url}" target="_blank" rel="noopener noreferrer">Open Source</a>`);
-  }
-  if (item.copyright) {
-    modalLinks.insertAdjacentHTML('beforeend',
-      `<span class="muted" style="align-self:center;">© ${escapeHtml(item.copyright)}</span>`);
-  }
-
-  openModal();
+  // Fallback: a very simple generated placeholder (transparent PNG data URL could be used; here just return URL)
+  return url;
 }
-
-function youTubeIdFromUrl(url) {
+function extractYouTubeId(url) {
   try {
     const u = new URL(url);
-    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1);
     if (u.hostname.includes('youtube.com')) return u.searchParams.get('v');
-  } catch {}
+    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1);
+  } catch { /* ignore */ }
   return null;
 }
 
-// Fetch & display
-async function fetchApodRange() {
-  const start = clampToToday(startInput.value || startInput.min || startInput.max || '');
-  const end   = clampToToday(endInput.value || endInput.max || '');
+/* ---------- Fetch, filter, sort ---------- */
+async function fetchAPOD() {
+  const res = await fetch(FEED_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to fetch APOD feed: ${res.status}`);
+  const data = await res.json();
+  // Expect an array; if object with 'results', handle gracefully
+  return Array.isArray(data) ? data : (data.results || []);
+}
 
-  if (!start || !end) {
-    showStatus('Please select both a start and end date.');
-    return;
-  }
-  if (start > end) {
-    showStatus('Start date must be before end date.');
-    return;
-  }
+async function loadGallery() {
+  const startISO = startDateEl.value || null;
+  const endISO = endDateEl.value || null;
 
-  showStatus('Loading space photos…', true);
-  gallery.innerHTML = '';
+  showLoading();
 
   try {
-    const res = await fetch(apodData, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const all = await fetchAPOD();
 
-    // Expecting an array of APOD entries (date, title, url, hdurl, explanation, media_type)
-    const results = (Array.isArray(data) ? data : [])
-      .filter(item => item && item.date && isWithinRange(item.date, start, end));
+    const filtered = all
+      .filter(item => item.date && withinRange(item.date, startISO, endISO))
+      .sort((a, b) => parseISO(b.date) - parseISO(a.date)); // newest first
 
-    renderGallery(results);
-    showStatus('');
+    renderCards(filtered);
   } catch (err) {
     console.error(err);
-    showStatus('Sorry, we could not load APOD data right now. Please try again.');
+    gallery.innerHTML = `
+      <div class="placeholder">
+        <div class="placeholder-icon">🚧</div>
+        <p>Oops—couldn’t load the gallery right now. Please try again.</p>
+      </div>
+    `;
+  } finally {
+    clearLoading();
   }
 }
 
-button.addEventListener('click', fetchApodRange);
-pickRandomFact();
+/* ---------- Modal logic ---------- */
+const modal = document.getElementById('modal');
+const modalClose = document.getElementById('modalClose');
+const modalMediaWrap = document.getElementById('modalMediaWrap');
+const modalTitle = document.getElementById('modalTitle');
+const modalDate = document.getElementById('modalDate');
+const modalDesc = document.getElementById('modalDesc');
+
+function openModal(item) {
+  const safeTitle = escapeHtml(item.title ?? "Untitled");
+  modalTitle.textContent = safeTitle;
+  modalDate.textContent = prettyDate(item.date ?? "");
+  modalDesc.textContent = item.explanation ?? "";
+
+  // Media: image or video embed / link (extra credit)
+  modalMediaWrap.innerHTML = '';
+  if (item.media_type === 'image') {
+    const src = item.hdurl || item.url;
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = safeTitle;
+    modalMediaWrap.appendChild(img);
+  } else if (item.media_type === 'video') {
+    const url = item.url || '';
+    const ytId = extractYouTubeId(url);
+    if (ytId) {
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://www.youtube.com/embed/${ytId}`;
+      iframe.title = safeTitle;
+      iframe.loading = 'lazy';
+      iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      iframe.allowFullscreen = true;
+      iframe.style.aspectRatio = '16 / 9';
+      modalMediaWrap.appendChild(iframe);
+    } else {
+      // Non-YouTube video: show thumbnail if present + link
+      const thumb = chooseThumb(item);
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = 'Open video';
+      if (thumb) {
+        const img = document.createElement('img');
+        img.src = thumb;
+        img.alt = `${safeTitle} (video thumbnail)`;
+        modalMediaWrap.appendChild(img);
+      }
+      const p = document.createElement('p');
+      p.style.padding = '12px 16px';
+      p.appendChild(a);
+      modalMediaWrap.appendChild(p);
+    }
+  }
+
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  modalClose.focus();
+}
+function closeModal() {
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+}
+modalClose.addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => {
+  if (e.target.hasAttribute('data-close-modal')) closeModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && modal.getAttribute('aria-hidden') === 'false') closeModal();
+});
+
+/* ---------- Events ---------- */
+getBtn.addEventListener('click', () => {
+  if (placeholder) placeholder.remove();
+  loadGallery();
+});
+
+/* ---------- Defaults ---------- */
+/* Pre-fill dates with a recent 14-day window to make testing instant */
+(function presetDates() {
+  const today = new Date();
+  const endISO = today.toISOString().slice(0, 10);
+  const start = new Date(today);
+  start.setDate(start.getDate() - 13);
+  const startISO = start.toISOString().slice(0, 10);
+  startDateEl.value = startISO;
+  endDateEl.value = endISO;
+})();
+
+/* ---------- Misc ---------- */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (ch) =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])
+  );
+}
